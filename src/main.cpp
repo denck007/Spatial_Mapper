@@ -1,28 +1,13 @@
-///////////////////////////////////////////////////////////////////////////
-//
-// Copyright (c) 2017, STEREOLABS.
-//
-// All rights reserved.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-///////////////////////////////////////////////////////////////////////////
-
 /*************************************************************************
+ ** Based on the Stereolabs example:                                    **
+ **    github.com/stereolabs/zed-examples/tree/master/spatial%20mapping **
  ** This sample shows how to capture a real-time 3D reconstruction      **
  ** of the scene using the Spatial Mapping API. The resulting mesh      **
  ** is displayed as a wireframe on top of the left image using OpenGL.  **
  ** Spatial Mapping can be started and stopped with the Space Bar key   **
+ **                                                                     **
+ ** Additions to the example are:                                       **
+ **  More command line control over resolution, range, and output       **
  *************************************************************************/
 
  // Standard includes
@@ -96,19 +81,31 @@ void printStart();
 int main(int argc, char** argv) {
     // Setup configuration parameters for the ZED    
     sl::InitParameters parameters;
+    parameters.depth_mode = sl::DEPTH_MODE_QUALITY;// Use QUALITY depth mode to improve mapping results
+    parameters.coordinate_units = sl::UNIT_METER;
+    parameters.coordinate_system = sl::COORDINATE_SYSTEM_RIGHT_HANDED_Y_UP; // OpenGL coordinates system
+    // Open the ZED
+    sl::ERROR_CODE err = zed.open(parameters);
+    if (err != sl::ERROR_CODE::SUCCESS) {
+        std::cout << sl::toString(err) << std::endl;
+        zed.close();
+        return -1;
+    }
 
     // initialize default args
-    double resolution_meter = 0.05;
-    double range_meter = 5.0;
+    spatial_mapping_params.resolution_meter = sl::SpatialMappingParameters::get(sl::SpatialMappingParameters::MAPPING_RESOLUTION_MEDIUM);
+    spatial_mapping_params.range_meter = sl::SpatialMappingParameters::getRecommendedRange(spatial_mapping_params.resolution_meter, zed);
+    //double resolution_meter = 0.05;//sl::SpatialMappingParameters::get(sl::SpatialMappingParameters::MAPPING_RESOLUTION_MEDIUM);
+    //double range_meter = 5.0;//sl::SpatialMappingParameters::getRecommendedRange(spatial_mapping_params.resolution_meter, zed);
     bool save_texture = true;
 
     for (int i=1; i < argc; ++i){        
         if (std::string(argv[i]) == "--resolution"){
-            resolution_meter = std::stod(argv[i+1]);
-            std::cout << "resolution: " << std::to_string(resolution_meter) << "\n";
+            spatial_mapping_params.resolution_meter = std::stod(argv[i+1]);
+            std::cout << "resolution: " << std::to_string(spatial_mapping_params.resolution_meter) << "\n";
         } else if (std::string(argv[i]) == "--range"){
-            range_meter = std::stod(argv[i+1]);
-            std::cout << "range: " << std::to_string(range_meter) << "\n";
+            spatial_mapping_params.range_meter = std::stod(argv[i+1]);
+            std::cout << "range: " << std::to_string(spatial_mapping_params.range_meter) << "\n";
         }  else if (std::string(argv[i]) == "--save_texture"){
             save_texture = std::string(argv[i+1])=="true" ? true : false;
             std::cout << "save_texture: " << std::to_string(save_texture) << "\n";
@@ -118,22 +115,18 @@ int main(int argc, char** argv) {
         }
     }
 
+    //spatial_mapping_params.range_meter = range_meter;
+    spatial_mapping_params.save_texture = save_texture;
+    spatial_mapping_params.max_memory_usage = 512;
+    spatial_mapping_params.use_chunk_only = USE_CHUNKS; // If we use chunks we do not need to keep the mesh consistent
+    
+    filter_params.set(sl::MeshFilterParameters::MESH_FILTER_LOW);
 
+    std::cout << ">> Finished configuring camera" <<std::endl;
+    
     // Init GLUT window
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA);
-
-    parameters.depth_mode = sl::DEPTH_MODE_QUALITY;// Use QUALITY depth mode to improve mapping results
-    parameters.coordinate_units = sl::UNIT_METER;
-    parameters.coordinate_system = sl::COORDINATE_SYSTEM_RIGHT_HANDED_Y_UP; // OpenGL coordinates system
-
-    // Open the ZED
-    sl::ERROR_CODE err = zed.open(parameters);
-    if (err != sl::ERROR_CODE::SUCCESS) {
-        std::cout << sl::toString(err) << std::endl;
-        zed.close();
-        return -1;
-    }
 
     wWnd = (int) zed.getResolution().width;
     hWnd = (int) zed.getResolution().height;
@@ -141,21 +134,7 @@ int main(int argc, char** argv) {
     // Create GLUT window
     glutInitWindowSize(wWnd, hWnd);
     glutCreateWindow("ZED Spatial Mapping");
-
-    // Configure Spatial Mapping and filtering parameters
-    //spatial_mapping_params.resolution_meter = sl::SpatialMappingParameters::get(sl::SpatialMappingParameters::MAPPING_RESOLUTION_MEDIUM);
-    spatial_mapping_params.resolution_meter = resolution_meter;
-
-    // Use recommanded depth range, computed based on current zed object inner parameters
-    // Or let it to its default value (0.f) and the range will be automatically adjusted when spatial mapping starts.
-    //spatial_mapping_params.range_meter = sl::SpatialMappingParameters::getRecommendedRange(spatial_mapping_params.resolution_meter, zed);
-    spatial_mapping_params.range_meter = range_meter;
-    spatial_mapping_params.save_texture = save_texture;
-    spatial_mapping_params.max_memory_usage = 512;
-    spatial_mapping_params.use_chunk_only = USE_CHUNKS; // If we use chunks we do not need to keep the mesh consistent
     
-    filter_params.set(sl::MeshFilterParameters::MESH_FILTER_LOW);
-
     // Initialize OpenGL
     int res = initGL();
     if (res != 0) {
@@ -164,9 +143,6 @@ int main(int argc, char** argv) {
         return -1;
     }
     printStart();
-    //std::cout << "*************************************************************" << std::endl;
-    //std::cout << "**      Press the Space Bar key to start and stop          **" << std::endl;
-    //std::cout << "*************************************************************" << std::endl;
 
     // Set glut callback before start
     glutKeyboardFunc(keyPressedCallback);// Callback that starts spatial mapping when space bar is pressed
@@ -234,7 +210,6 @@ void stopMapping() {
     std::tm* now = std::localtime(&t);
     std::ostringstream time;
     time << now->tm_year+1900 << "-" << now->tm_mon << "-" << now->tm_mday << "T" << now->tm_hour << ":" << now->tm_min <<":"<<now->tm_sec;
-    //std::cout << time.str() << std::endl;
     
     std::string rawSaveName = getDir() + "mesh_gen_raw_" + time.str() + ".obj";
     std::string filteredSaveName = getDir() + "mesh_gen_filtered_" + time.str() + ".obj";
@@ -265,12 +240,6 @@ void stopMapping() {
         if (savesucceeded) std::cout << ">> Textured mesh has been saved under " << texturedSaveName << std::endl;
         else std::cout << ">> Failed to save the textured mesh under  " << texturedSaveName << std::endl;
     }
-
-    //Save as an OBJ file
-    //std::string saveName = getDir() + "mesh_gen.obj";
-    //bool t = wholeMesh.save(saveName.c_str());
-    //if (t) std::cout << ">> Mesh has been saved under " << saveName << std::endl;
-    //else std::cout << ">> Failed to save the mesh under  " << saveName << std::endl;
 
     // Update the displayed Mesh
 #if USE_CHUNKS
